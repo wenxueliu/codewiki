@@ -30,7 +30,13 @@ public class JavaParserServiceImpl implements CodeParserService {
 
     @Override
     public CodeParseResult parseFile(File javaFile, Path projectRoot) {
-        // ... Symbol Solver 配置不变 ...
+        // --- 1. 配置 Symbol Solver ---
+        CombinedTypeSolver typeSolver = new CombinedTypeSolver();
+        typeSolver.add(new ReflectionTypeSolver()); // 解析 JDK 类
+        typeSolver.add(new JavaParserTypeSolver(projectRoot)); // 解析项目源码
+
+        JavaSymbolSolver symbolSolver = new JavaSymbolSolver(typeSolver);
+        StaticJavaParser.getConfiguration().setSymbolResolver(symbolSolver);
 
         CodeParseResult result = new CodeParseResult();
         try {
