@@ -1,6 +1,8 @@
 package com.codebase.dto;
 
+import com.codebase.model.ClassNode;
 import com.codebase.model.CodeDocument;
+import com.codebase.model.InterfaceNode;
 import com.codebase.model.MethodNode;
 import lombok.Data;
 
@@ -9,21 +11,45 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+
+import lombok.Value; // 使用 @Value 创建不可变的关系对象
+
 @Data
 public class CodeParseResult {
-    // 用于存入 Elasticsearch 的文档
     private List<CodeDocument> documents = new ArrayList<>();
 
-    // 用于存入 Neo4j 的节点
+    // 节点
+    private Set<ClassNode> classNodes = new HashSet<>();
+    private Set<InterfaceNode> interfaceNodes = new HashSet<>();
     private Set<MethodNode> methodNodes = new HashSet<>();
-    // 可以在此添加 ClassNode, InterfaceNode 等
 
-    // 用于描述调用关系，方便后续在 Neo4j 中建立关系
-    private Set<CallRelationship> callRelationships = new HashSet<>();
-
-    @Data
+    // 关系 (使用不可变对象更安全)
+    @Value
     public static class CallRelationship {
-        private final String callerFqn; // 调用方方法的完全限定名
-        private final String calleeFqn; // 被调用方方法的完全限定名
+        String callerFqn;
+        String calleeFqn;
     }
+
+    @Value
+    public static class HasMethodRelationship {
+        String ownerFqn;
+        String methodFqn;
+    }
+
+    @Value
+    public static class ExtendsRelationship {
+        String childFqn;
+        String parentFqn;
+    }
+
+    @Value
+    public static class ImplementsRelationship {
+        String classFqn;
+        String interfaceFqn;
+    }
+
+    private Set<CallRelationship> callRelationships = new HashSet<>();
+    private Set<HasMethodRelationship> hasMethodRelationships = new HashSet<>();
+    private Set<ExtendsRelationship> extendsRelationships = new HashSet<>();
+    private Set<ImplementsRelationship> implementsRelationships = new HashSet<>();
 }

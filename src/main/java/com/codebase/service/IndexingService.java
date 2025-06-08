@@ -12,7 +12,7 @@ public interface IndexingService {
      *
      * @param projectRoot 项目根目录
      */
-    void startIndexing(Path projectRoot);
+    void fullIndexing(Path projectRoot);
 
     /**
      * 根据 Git 的变更进行增量索引。

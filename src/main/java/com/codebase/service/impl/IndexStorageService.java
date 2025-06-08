@@ -1,7 +1,9 @@
 package com.codebase.service.impl;
 
 import com.codebase.dto.CodeParseResult;
+import com.codebase.repository.ClassNodeRepository;
 import com.codebase.repository.CodeSearchRepository;
+import com.codebase.repository.InterfaceNodeRepository;
 import com.codebase.repository.MethodNodeRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,8 +18,17 @@ public class IndexStorageService {
     private final CodeSearchRepository searchRepository;
     private final MethodNodeRepository methodNodeRepository;
 
+    private final ClassNodeRepository classNodeRepository; // 新增
+    private final InterfaceNodeRepository interfaceNodeRepository;
+
     @Transactional
     public void save(CodeParseResult result) {
+        if (!result.getClassNodes().isEmpty()) {
+            classNodeRepository.saveAll(result.getClassNodes());
+        }
+        if (!result.getInterfaceNodes().isEmpty()) {
+            interfaceNodeRepository.saveAll(result.getInterfaceNodes());
+        }
         // 保存到 Elasticsearch
         if (!result.getDocuments().isEmpty()) {
             searchRepository.saveAll(result.getDocuments());
@@ -37,6 +48,11 @@ public class IndexStorageService {
                 });
             });
         });
+
+        result.getHasMethodRelationships().forEach(rel -> classNodeRepository.createHasMethodRelationship(rel.getOwnerFqn(), rel.getMethodFqn()));
+        result.getExtendsRelationships().forEach(rel -> classNodeRepository.createExtendsRelationship(rel.getChildFqn(), rel.getParentFqn()));
+        result.getImplementsRelationships().forEach(rel -> classNodeRepository.createImplementsRelationship(rel.getClassFqn(), rel.getInterfaceFqn()));
+        result.getCallRelationships().forEach(rel -> methodNodeRepository.createCallsRelationship(rel.getCallerFqn(), rel.getCalleeFqn()));
     }
 
     @Transactional

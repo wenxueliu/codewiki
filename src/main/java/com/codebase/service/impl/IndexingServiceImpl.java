@@ -25,7 +25,7 @@ public class IndexingServiceImpl implements IndexingService {
 
     @Override
     @Transactional // 使用事务保证数据一致性
-    public void startIndexing(Path projectRoot) {
+    public void fullIndexing(Path projectRoot) {
         log.info("Starting full codebase indexing for project: {}", projectRoot);
 
         // 1. 清理旧数据 (可选，全量索引时通常需要)
