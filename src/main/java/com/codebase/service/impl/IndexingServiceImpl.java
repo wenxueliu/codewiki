@@ -25,43 +25,41 @@ public class IndexingServiceImpl implements IndexingService {
 
     @Override
     @Transactional // 使用事务保证数据一致性
-    public void fullIndexing(Path projectRoot) {
-        log.info("Starting full codebase indexing for project: {}", projectRoot);
+    public void fullIndexing(Path projectRoot, String repositoryId) {
+        log.info("Starting full codebase indexing for repository: {}", repositoryId);
 
-        // 1. 清理旧数据 (可选，全量索引时通常需要)
-        log.info("Clearing old index data...");
-        indexStorageService.deleteAll();
+        // 1. 按代码仓清理旧数据，而不是 deleteAll()
+        log.info("Clearing old index data for repository: {}...", repositoryId);
+        indexStorageService.deleteByRepositoryId(repositoryId);
 
-        // 2. 遍历所有 .java 文件
+        // 2. 遍历文件并处理
         try (Stream<Path> paths = Files.walk(projectRoot)) {
-            paths.filter(path -> path.toString().endsWith(".java"))
+            paths.filter(path -> path.toString().endsWith(".java")
+                            && !path.toString().contains("src/test/java")
+                            && path.toString().contains("service/"))
                     .forEach(javaFile -> {
                         log.info("Parsing file: {}", javaFile);
-                        processFile(javaFile, projectRoot);
+                        processFile(javaFile, projectRoot, repositoryId); // 传递 repositoryId
                     });
         } catch (IOException e) {
             log.error("Error walking through project directory", e);
         }
-
-        // 5. 在所有节点都入库后，建立关系
-        // (这一步也可以在解析每个文件后立即执行，但批量处理性能更好)
-        // 简单的示例是再遍历一次所有文件，或者维护一个全局的待处理关系列表
-        log.info("Indexing finished.");
+        log.info("Indexing finished for repository: {}.", repositoryId);
     }
 
     @Override
-    public void startIncrementalIndexing(Path projectRoot, List<ChangedFile> changedFiles) {
+    public void startIncrementalIndexing(String repositoryId, Path projectRoot, List<ChangedFile> changedFiles) {
         log.info("Starting incremental indexing for {} changed files.", changedFiles.size());
 
         for (ChangedFile file : changedFiles) {
             // 现在直接处理传入的变更列表
-            processChange(file, projectRoot);
+            processChange(file, projectRoot, repositoryId);
         }
 
         log.info("Incremental indexing finished.");
     }
 
-    private void processChange(ChangedFile changedFile, Path projectRoot) {
+    private void processChange(ChangedFile changedFile, Path projectRoot, String repositoryId) {
         log.info("Processing change: {} on file {}", changedFile.getChangeType(), changedFile.getNewPath());
 
         // 先删除旧的，再处理新的。对于 RENAME，这正好是正确的操作。
@@ -75,7 +73,7 @@ public class IndexingServiceImpl implements IndexingService {
             case MODIFY:
             case RENAME:
                 if (changedFile.getNewPath() != null && !changedFile.getNewPath().equals("/dev/null")) {
-                    processFile(projectRoot.resolve(changedFile.getNewPath()), projectRoot);
+                    processFile(projectRoot.resolve(changedFile.getNewPath()), projectRoot, repositoryId);
                 }
                 break;
             case DELETE:
@@ -87,11 +85,11 @@ public class IndexingServiceImpl implements IndexingService {
         }
     }
 
-    private void processFile(Path filePath, Path projectRoot) {
+    private void processFile(Path filePath, Path projectRoot, String repositoryId) {
         log.debug("Parsing file: {}", filePath);
-        CodeParseResult result = codeParserService.parseFile(filePath.toFile(), projectRoot);
+        CodeParseResult result = codeParserService.parseFile(filePath.toFile(), projectRoot, repositoryId);
         if (result != null) {
-            indexStorageService.save(result);
+            indexStorageService.save(result, repositoryId); // 传递 repositoryId
         }
     }
 }

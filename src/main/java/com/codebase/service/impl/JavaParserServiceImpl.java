@@ -3,14 +3,14 @@ package com.codebase.service.impl;
 import com.codebase.dto.CodeParseResult;
 import com.codebase.model.*;
 import com.codebase.service.CodeParserService;
-import com.github.javaparser.StaticJavaParser;
+import com.github.javaparser.JavaParser;
+import com.github.javaparser.ParserConfiguration;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.resolution.declarations.ResolvedMethodDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration;
-import com.github.javaparser.resolution.types.ResolvedReferenceType;
 import com.github.javaparser.symbolsolver.JavaSymbolSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeSolver;
@@ -29,48 +29,72 @@ import java.util.Optional;
 public class JavaParserServiceImpl implements CodeParserService {
 
     @Override
-    public CodeParseResult parseFile(File javaFile, Path projectRoot) {
-        // --- 1. 配置 Symbol Solver ---
-        CombinedTypeSolver typeSolver = new CombinedTypeSolver();
-        typeSolver.add(new ReflectionTypeSolver()); // 解析 JDK 类
-        typeSolver.add(new JavaParserTypeSolver(projectRoot)); // 解析项目源码
-
-        JavaSymbolSolver symbolSolver = new JavaSymbolSolver(typeSolver);
-        StaticJavaParser.getConfiguration().setSymbolResolver(symbolSolver);
-
+    public CodeParseResult parseFile(File javaFile, Path projectRoot, String repositoryId) {
         CodeParseResult result = new CodeParseResult();
-        try {
-            CompilationUnit cu = StaticJavaParser.parse(javaFile);
 
-            // 遍历文件中的所有类和接口定义
+        try {
+            // 配置 JavaParser
+            CombinedTypeSolver typeSolver = new CombinedTypeSolver();
+            typeSolver.add(new ReflectionTypeSolver());
+            typeSolver.add(new JavaParserTypeSolver(projectRoot.toFile()));
+
+            ParserConfiguration config = new ParserConfiguration()
+                    .setSymbolResolver(new JavaSymbolSolver(typeSolver));
+
+            JavaParser parser = new JavaParser(config);
+
+            Optional<CompilationUnit> cuOpt = parser.parse(javaFile).getResult();
+            if (cuOpt.isEmpty()) {
+                log.warn("Could not parse file: {}", javaFile);
+                return result;
+            }
+
+            CompilationUnit cu = cuOpt.get();
+
             cu.findAll(ClassOrInterfaceDeclaration.class).forEach(typeDecl -> {
                 try {
                     ResolvedReferenceTypeDeclaration resolvedType = typeDecl.resolve();
 
                     // --- 1. 创建 Class 或 Interface 节点 ---
                     if (typeDecl.isInterface()) {
-                        InterfaceNode interfaceNode = createInterfaceNode(resolvedType, typeDecl, javaFile.toPath());
+                        InterfaceNode interfaceNode = createInterfaceNode(resolvedType, typeDecl, javaFile.toPath(),
+                                repositoryId);
                         result.getInterfaceNodes().add(interfaceNode);
                     } else {
-                        ClassNode classNode = createClassNode(resolvedType, typeDecl, javaFile.toPath());
+                        ClassNode classNode = createClassNode(resolvedType, typeDecl, javaFile.toPath(), repositoryId);
                         result.getClassNodes().add(classNode);
                     }
 
                     // --- 2. 提取继承 (EXTENDS) 和实现 (IMPLEMENTS) 关系 ---
-                    // 继承关系
-                    resolvedType.getAncestors().stream()
-                            .filter(ResolvedReferenceType::isJavaLangObject) // 直接父类
-                            .findFirst()
-                            .ifPresent(parentClass -> result.getExtendsRelationships().add(
-                                    new CodeParseResult.ExtendsRelationship(resolvedType.getQualifiedName(), parentClass.getQualifiedName())
-                            ));
+                    if (typeDecl.isInterface()) {
+                        // 接口的继承关系
+                        resolvedType.getAncestors().stream()
+                                .filter(ancestor -> ancestor.getTypeDeclaration().isPresent()
+                                        && ancestor.getTypeDeclaration().get().isInterface()) // 父接口
+                                .forEach(parentInterface -> result.getExtendsRelationships().add(
+                                        new CodeParseResult.ExtendsRelationship(resolvedType.getQualifiedName(),
+                                                parentInterface.getQualifiedName())));
+                    } else {
+                        // 类的继承关系
+                        resolvedType.getAncestors().stream()
+                                .filter(ancestor -> ancestor.getTypeDeclaration().isPresent()
+                                        && !ancestor.getTypeDeclaration().get().isInterface()) // 直接父类（非接口）
+                                .findFirst()
+                                .ifPresent(parentClass -> {
+                                    if (!parentClass.getQualifiedName().equals("java.lang.Object")) {
+                                        result.getExtendsRelationships().add(
+                                                new CodeParseResult.ExtendsRelationship(resolvedType.getQualifiedName(),
+                                                        parentClass.getQualifiedName()));
+                                    }
+                                });
 
-                    // 实现关系
-                    resolvedType.getAncestors().stream()
-                            .filter(ResolvedReferenceType::isInferenceVariable) // 所有实现的接口
-                            .forEach(parentInterface -> result.getImplementsRelationships().add(
-                                    new CodeParseResult.ImplementsRelationship(resolvedType.getQualifiedName(), parentInterface.getQualifiedName())
-                            ));
+                        // 类实现接口的关系
+                        resolvedType.getAllAncestors().stream()
+                                .filter(ancestor -> ancestor.getTypeDeclaration().get().isInterface()) // 所有实现的接口
+                                .forEach(parentInterface -> result.getImplementsRelationships().add(
+                                        new CodeParseResult.ImplementsRelationship(resolvedType.getQualifiedName(),
+                                                parentInterface.getQualifiedName())));
+                    }
 
                     // --- 3. 提取方法 (Method) 和 HAS_METHOD, CALLS 关系 ---
                     typeDecl.findAll(MethodDeclaration.class).forEach(md -> {
@@ -79,37 +103,40 @@ public class JavaParserServiceImpl implements CodeParserService {
                             String methodFqn = resolvedMd.getQualifiedSignature();
 
                             // 创建 Method 节点
-                            result.getMethodNodes().add(createMethodNode(resolvedMd, md, javaFile.toPath()));
+                            result.getMethodNodes()
+                                    .add(createMethodNode(resolvedMd, md, javaFile.toPath(), repositoryId));
                             // 创建 Code Document (用于 ES)
-                            result.getDocuments().add(createCodeDocument(resolvedMd, md, javaFile.toPath()));
+                            result.getDocuments()
+                                    .add(createCodeDocument(resolvedMd, md, javaFile.toPath(), repositoryId));
 
                             // 创建 HAS_METHOD 关系
                             result.getHasMethodRelationships().add(
-                                    new CodeParseResult.HasMethodRelationship(resolvedType.getQualifiedName(), methodFqn)
-                            );
+                                    new CodeParseResult.HasMethodRelationship(resolvedType.getQualifiedName(),
+                                            methodFqn));
 
                             // 查找方法调用 (CALLS)
                             md.findAll(MethodCallExpr.class).forEach(mce -> {
                                 try {
                                     result.getCallRelationships().add(new CodeParseResult.CallRelationship(
-                                            methodFqn, mce.resolve().getQualifiedSignature()
-                                    ));
+                                            methodFqn, mce.resolve().getQualifiedSignature()));
                                 } catch (Exception e) {
-                                    log.trace("Could not resolve method call '{}' in {}", mce.getNameAsString(), methodFqn);
+                                    log.trace("Could not resolve method call '{}' in {}", mce.getNameAsString(),
+                                            methodFqn);
                                 }
                             });
                         } catch (Exception e) {
-                            log.warn("Could not resolve method '{}' in type '{}'.", md.getNameAsString(), resolvedType.getQualifiedName());
+                            log.warn("Could not resolve method '{}' in type '{}'.", md.getNameAsString(),
+                                    resolvedType.getQualifiedName());
                         }
                     });
 
                 } catch (Exception e) {
-                    log.warn("Could not resolve type '{}' in file {}.", typeDecl.getNameAsString(), javaFile.getName());
+                    log.warn("Could not resolve type declaration: {}", typeDecl.getNameAsString(), e);
                 }
             });
 
         } catch (Exception e) {
-            log.error("Failed to parse file: {}", javaFile.getAbsolutePath(), e);
+            log.error("Error parsing file: {}", javaFile, e);
         }
 
         return result;
@@ -117,27 +144,38 @@ public class JavaParserServiceImpl implements CodeParserService {
 
     // --- 辅助创建方法 ---
 
-    private ClassNode createClassNode(ResolvedReferenceTypeDeclaration resolvedType, ClassOrInterfaceDeclaration typeDecl, Path filePath) {
+    private ClassNode createClassNode(ResolvedReferenceTypeDeclaration resolvedType,
+            ClassOrInterfaceDeclaration typeDecl, Path filePath, String repositoryId) {
         ClassNode node = new ClassNode();
-        populateAbstractSyntaxNode(node, resolvedType.getQualifiedName(), typeDecl.getNameAsString(), filePath, typeDecl);
+        populateAbstractSyntaxNode(node, repositoryId + ":"
+                + resolvedType.getQualifiedName(), typeDecl.getNameAsString(), filePath,
+                typeDecl, repositoryId);
         return node;
     }
 
-    private InterfaceNode createInterfaceNode(ResolvedReferenceTypeDeclaration resolvedType, ClassOrInterfaceDeclaration typeDecl, Path filePath) {
+    private InterfaceNode createInterfaceNode(ResolvedReferenceTypeDeclaration resolvedType,
+            ClassOrInterfaceDeclaration typeDecl, Path filePath, String repositoryId) {
         InterfaceNode node = new InterfaceNode();
-        populateAbstractSyntaxNode(node, resolvedType.getQualifiedName(), typeDecl.getNameAsString(), filePath, typeDecl);
+        populateAbstractSyntaxNode(node, repositoryId + ":"
+                + resolvedType.getQualifiedName(), typeDecl.getNameAsString(), filePath,
+                typeDecl, repositoryId);
         return node;
     }
 
-    private MethodNode createMethodNode(ResolvedMethodDeclaration resolvedMd, MethodDeclaration md, Path filePath) {
+    private MethodNode createMethodNode(ResolvedMethodDeclaration resolvedMd, MethodDeclaration md, Path filePath,
+            String repositoryId) {
         MethodNode node = new MethodNode();
-        populateAbstractSyntaxNode(node, resolvedMd.getQualifiedSignature(), md.getNameAsString(), filePath, md);
+        populateAbstractSyntaxNode(node, repositoryId + ":" + resolvedMd.getQualifiedSignature(), md.getNameAsString(),
+                filePath, md,
+                repositoryId);
         return node;
     }
 
     // 重构出的通用填充方法
-    private void populateAbstractSyntaxNode(AbstractSyntaxNode node, String fqn, String name, Path filePath, com.github.javaparser.ast.Node astNode) {
-        node.setQualifiedName(fqn);
+    private void populateAbstractSyntaxNode(AbstractSyntaxNode node, String fqn, String name, Path filePath,
+            com.github.javaparser.ast.Node astNode, String repositoryId) {
+        node.setRepositoryId(repositoryId);
+        node.setGlobalFqn(fqn);
         node.setName(name);
         node.setFilePath(filePath.toString());
         astNode.getRange().ifPresent(range -> {
@@ -146,8 +184,10 @@ public class JavaParserServiceImpl implements CodeParserService {
         });
     }
 
-    private CodeDocument createCodeDocument(ResolvedMethodDeclaration resolvedMd, MethodDeclaration md, Path filePath) {
+    private CodeDocument createCodeDocument(ResolvedMethodDeclaration resolvedMd, MethodDeclaration md, Path filePath,
+            String repositoryId) {
         CodeDocument doc = new CodeDocument();
+        doc.setRepositoryId(repositoryId);
         doc.setQualifiedName(resolvedMd.getQualifiedSignature());
         doc.setName(md.getNameAsString());
         doc.setType("Method");
@@ -172,7 +212,8 @@ public class JavaParserServiceImpl implements CodeParserService {
         doc.setAlias(extractAliases(commentContent.orElse("")));
 
         // TODO: 调用向量化服务
-        // doc.setCodeVector(vectorize(md.getNameAsString() + " " + commentContent.orElse("")));
+        // doc.setCodeVector(vectorize(md.getNameAsString() + " " +
+        // commentContent.orElse("")));
         // doc.setCodeVector(...)
 
         return doc;

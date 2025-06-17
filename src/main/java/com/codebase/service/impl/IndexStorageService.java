@@ -2,7 +2,6 @@ package com.codebase.service.impl;
 
 import com.codebase.dto.CodeParseResult;
 import com.codebase.repository.ClassNodeRepository;
-import com.codebase.repository.CodeSearchRepository;
 import com.codebase.repository.InterfaceNodeRepository;
 import com.codebase.repository.MethodNodeRepository;
 import lombok.RequiredArgsConstructor;
@@ -15,62 +14,84 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class IndexStorageService {
 
-    private final CodeSearchRepository searchRepository;
+    // private final CodeSearchRepository searchRepository;
     private final MethodNodeRepository methodNodeRepository;
-
-    private final ClassNodeRepository classNodeRepository; // 新增
+    private final ClassNodeRepository classNodeRepository;
     private final InterfaceNodeRepository interfaceNodeRepository;
 
     @Transactional
-    public void save(CodeParseResult result) {
+    public void save(CodeParseResult result, String repositoryId) {
+        // 1. 设置 repositoryId
+        result.getClassNodes().forEach(n -> n.setRepositoryId(repositoryId));
+        result.getInterfaceNodes().forEach(n -> n.setRepositoryId(repositoryId));
+        result.getMethodNodes().forEach(n -> n.setRepositoryId(repositoryId));
+        result.getDocuments().forEach(d -> d.setRepositoryId(repositoryId));
+
+        // 2. 保存节点
         if (!result.getClassNodes().isEmpty()) {
             classNodeRepository.saveAll(result.getClassNodes());
         }
         if (!result.getInterfaceNodes().isEmpty()) {
             interfaceNodeRepository.saveAll(result.getInterfaceNodes());
         }
-        // 保存到 Elasticsearch
-        if (!result.getDocuments().isEmpty()) {
-            searchRepository.saveAll(result.getDocuments());
-        }
-
-        // 保存到 Neo4j
         if (!result.getMethodNodes().isEmpty()) {
             methodNodeRepository.saveAll(result.getMethodNodes());
         }
+        // 保存到 Elasticsearch
+        if (!result.getDocuments().isEmpty()) {
+            // searchRepository.saveAll(result.getDocuments());
+        }
 
-        // 建立调用关系
-        result.getCallRelationships().forEach(rel -> {
-            methodNodeRepository.findById(rel.getCallerFqn()).ifPresent(caller -> {
-                methodNodeRepository.findById(rel.getCalleeFqn()).ifPresent(callee -> {
-                    caller.getCalls().add(callee);
-                    methodNodeRepository.save(caller);
-                });
-            });
-        });
+        // 3. 创建关系
+        // 3.1 类与方法的关系
+        result.getHasMethodRelationships()
+                .forEach(rel -> classNodeRepository.createHasMethodRelationship(rel.getOwnerFqn(), rel.getMethodFqn()));
 
-        result.getHasMethodRelationships().forEach(rel -> classNodeRepository.createHasMethodRelationship(rel.getOwnerFqn(), rel.getMethodFqn()));
-        result.getExtendsRelationships().forEach(rel -> classNodeRepository.createExtendsRelationship(rel.getChildFqn(), rel.getParentFqn()));
-        result.getImplementsRelationships().forEach(rel -> classNodeRepository.createImplementsRelationship(rel.getClassFqn(), rel.getInterfaceFqn()));
-        result.getCallRelationships().forEach(rel -> methodNodeRepository.createCallsRelationship(rel.getCallerFqn(), rel.getCalleeFqn()));
+        // 3.2 类的继承关系
+        result.getExtendsRelationships()
+                .forEach(rel -> classNodeRepository.createExtendsRelationship(rel.getChildFqn(), rel.getParentFqn()));
+
+        // 3.3 类实现接口的关系
+        result.getImplementsRelationships().forEach(
+                rel -> classNodeRepository.createImplementsRelationship(rel.getClassFqn(), rel.getInterfaceFqn()));
+
+        // 3.4 方法调用关系
+        result.getCallRelationships()
+                .forEach(rel -> methodNodeRepository.createCallsRelationship(rel.getCallerFqn(), rel.getCalleeFqn()));
+
+        log.debug("Saved all nodes and relationships for repository: {}", repositoryId);
     }
 
     @Transactional
     public void deleteByFilePath(String filePath) {
         // 从 Elasticsearch 删除
-        // searchRepository.deleteByFilePath(filePath); // 假设实现了此方法
         log.warn("Elasticsearch deleteByFilePath is not yet implemented.");
+        // searchRepository.deleteByFilePath(filePath);
 
         // 从 Neo4j 删除
-//        methodNodeRepository.findAllByFilePath(filePath).forEach(node -> {
-//            methodNodeRepository.delete(node);
-//        });
+        methodNodeRepository.findAllByFilePath(filePath).forEach(methodNodeRepository::delete);
+        classNodeRepository.findAllByFilePath(filePath).forEach(classNodeRepository::delete);
+        interfaceNodeRepository.findAllByFilePath(filePath).forEach(interfaceNodeRepository::delete);
         log.debug("Deleted Neo4j nodes for file: {}", filePath);
     }
 
     @Transactional
+    public void deleteByRepositoryId(String repositoryId) {
+        // 从 Elasticsearch 删除
+        // searchRepository.deleteByRepositoryId(repositoryId);
+
+        // 从 Neo4j 删除
+        classNodeRepository.deleteByRepositoryId(repositoryId);
+        methodNodeRepository.deleteByRepositoryId(repositoryId);
+        interfaceNodeRepository.deleteByRepositoryId(repositoryId);
+        log.info("All index data for repository '{}' has been cleared.", repositoryId);
+    }
+
+    @Transactional
     public void deleteAll() {
-        searchRepository.deleteAll();
+        // searchRepository.deleteAll();
+        classNodeRepository.deleteAll();
+        interfaceNodeRepository.deleteAll();
         methodNodeRepository.deleteAll();
         log.info("All index data has been cleared.");
     }

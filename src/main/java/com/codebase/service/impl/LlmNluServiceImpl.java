@@ -39,16 +39,11 @@ public class LlmNluServiceImpl implements NluService {
             String hints = contextHintService.getHints(query);
 
             // 2. 调用 ChatClient
-            ChatResponse response = chatClient.prompt()
+            NluResult nluResult = chatClient.prompt()
                     .user(p -> p.param("context_hints", hints) // 填充模板中的占位符
                             .param("query", query))
                     .call()
-                    .chatResponse();
-
-            BeanOutputConverter<NluResult> outputParser = new BeanOutputConverter<>(NluResult.class);
-
-            // 3. 从响应中获取解析好的 Bean
-            NluResult nluResult = outputParser.convert(response.getResult().getOutput().getText());
+                    .entity(NluResult.class);
 
             nluResult.setOriginalQuery(query);
             log.info("Successfully parsed NLU result for query '{}': {}", query, nluResult);

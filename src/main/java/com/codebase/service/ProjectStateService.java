@@ -16,6 +16,17 @@ public class ProjectStateService {
     }
 
     public void setLastCommitId(String projectPath, String commitId) {
+        if (commitId == null) {
+            if (!projectLastCommit.containsKey(projectPath)) {
+                return;
+            }
+            projectLastCommit.remove(projectPath);
+            return;
+        }
+        if (projectLastCommit.containsKey(projectPath)) {
+            projectLastCommit.replace(projectPath, commitId);
+            return;
+        }
         projectLastCommit.put(projectPath, commitId);
     }
 }

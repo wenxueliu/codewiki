@@ -1,0 +1,47 @@
+server:
+  port: 8081
+spring:
+  profiles:
+    active: dev
+  ai:
+    openai:
+      api-key: ${llm.api.key}
+      chat:
+        options:
+          model: gpt-4o
+          temperature: 0.0
+#    vectorstore:
+#      opensearch:
+#        uris: http://127.0.0.1:9200
+#        username: admin
+#        password: Juice-swing@123
+#        index-name: spring-ai-document-index
+#        initialize-schema: true
+#        similarity-function: cosinesimil
+#        batching-strategy: TOKEN_COUNT
+  neo4j:
+    uri: bolt://localhost:7687
+    authentication:
+      username: neo4j
+      password: juice-swing-mexico-lucas-initial-4081
+logging:
+  level:
+    com.codebase: DEBUG
+
+llm:
+  api.key: sk-proj-1234567890
+  nlu:
+    prompt:
+      systemMessage: "you are a assistant"
+      userMessageTemplate: "query"
+      template: |
+        ???????????????????????????????????????JSON???????????????????????
+        --- CONTEXT HINTS ---
+        ???????????:
+        {context_hints}
+        --- END CONTEXT HINTS ---
+
+        --- USER QUERY ---
+        {query}
+        --- END USER QUERY ---
+        ?????JSON???????????????????????

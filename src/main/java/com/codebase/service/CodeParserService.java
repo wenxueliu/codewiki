@@ -9,9 +9,10 @@ public interface CodeParserService {
     /**
      * 解析单个 Java 文件。
      *
-     * @param javaFile    要解析的文件
-     * @param projectRoot 项目根目录，用于符号解析的上下文
+     * @param javaFile     要解析的文件
+     * @param projectRoot  项目根目录，用于符号解析的上下文
+     * @param repositoryId 仓库ID
      * @return 解析结果，包含待入库的实体和关系
      */
-    CodeParseResult parseFile(File javaFile, Path projectRoot);
+    CodeParseResult parseFile(File javaFile, Path projectRoot, String repositoryId);
 }
